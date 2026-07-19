@@ -209,7 +209,7 @@ File equivalence used for testing continuity:
 - dataset_full/sample_0001.json is exactly the same as
   dataset_sample/sample.json
 
-Current fine-tuning and evaluation split:
+Split that was use for fine-tuning and evaluation:
 
 | Split | Files | Examples |
 | --- | --- | --- |
