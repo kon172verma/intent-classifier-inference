@@ -1,0 +1,6 @@
+dotenv
+peft
+transformers
+torch
+numpy
+tensorflow
