@@ -38,6 +38,7 @@ Artifact targets:
 - GGUF for llama.cpp
 - ONNX for ONNX Runtime
 - TensorRT-LLM path for Jetson where supported
+- vLLM where a suitable GPU-backed environment is available
 
 ## Core Question
 
@@ -60,6 +61,9 @@ Out of scope for now:
 - Architectural model changes such as MHA to GQA conversion
 - Retraining and fine-tuning workflows
 - Broad framework exploration beyond the primary runtime set
+
+vLLM is worth keeping in the discussion, but it should be treated as a secondary
+benchmark path rather than the first edge-focused target.
 
 ## Runtime Matrix
 
@@ -241,9 +245,10 @@ Each benchmark report should include:
 The following technologies are worth investigating later, but are not part of the
 current repository scope:
 
-- LiteRT
-- MLC-LLM
+- vLLM
 - ExecuTorch
+- MLC-LLM
+- LiteRT
 - OpenVINO
 
 They can be revisited after the primary runtime matrix is stable and benchmarked.
