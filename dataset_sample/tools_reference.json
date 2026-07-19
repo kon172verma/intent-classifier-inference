@@ -1,0 +1,167 @@
+{
+  "_meta": {
+    "description": "Reference catalog of 30 MCP tools for the tool_router dataset. Used by the dataset generator to build prompts.",
+    "total_tools": 30,
+    "rare_tools": [
+      "emergency_sos",
+      "insurance_claims",
+      "roadside_assistance",
+      "home_automation_bridge",
+      "corp-fleet-manager"
+    ],
+    "rare_tool_note": "Rare tools appear as the correct answer in <2-3% of total examples. They must still appear occasionally in the available_tools list of other examples so the model sees their descriptions, but they are rarely the ground-truth answer.",
+    "naming_convention_note": "Tool names intentionally mix styles (kebab-case corp names, snake_case, short IDs) to mimic realistic MCP server registries."
+  },
+  "tools": [
+    {
+      "name": "corp-kariya-weather-app",
+      "description": "Provides weather forecasts, current conditions, and severe weather alerts for a given location.",
+      "rare": false
+    },
+    {
+      "name": "safety_proposal",
+      "description": "Analyzes driving context and provides real-time safety recommendations to the driver.",
+      "rare": false
+    },
+    {
+      "name": "face_emotion",
+      "description": "Analyzes facial expressions and emotions to detect driver fatigue, distraction, or stress.",
+      "rare": false
+    },
+    {
+      "name": "corp-scheduler-app",
+      "description": "Creates, reads, updates, and deletes calendar events and manages the driver's meeting schedule.",
+      "rare": false
+    },
+    {
+      "name": "in_car_analytics",
+      "description": "Provides driving analytics and vehicle telemetry including speed, fuel efficiency, and trip statistics.",
+      "rare": false
+    },
+    {
+      "name": "nav_route_planner",
+      "description": "Plans optimal routes, provides turn-by-turn navigation, and recalculates routes around obstacles.",
+      "rare": false
+    },
+    {
+      "name": "traffic_alert_service",
+      "description": "Reports real-time traffic conditions, road incidents, construction zones, and estimated delays.",
+      "rare": false
+    },
+    {
+      "name": "media_player_ctrl",
+      "description": "Controls in-car media playback including play, pause, skip, volume, and playlist management.",
+      "rare": false
+    },
+    {
+      "name": "climate_control",
+      "description": "Manages cabin temperature, fan speed, heated seats, and ventilation settings.",
+      "rare": false
+    },
+    {
+      "name": "vehicle_diagnostics",
+      "description": "Reads and reports OBD-II fault codes, engine health, tyre pressure, and maintenance due dates.",
+      "rare": false
+    },
+    {
+      "name": "corp-contact-sync",
+      "description": "Accesses the driver's contact list, searches contacts, and retrieves phone numbers or addresses.",
+      "rare": false
+    },
+    {
+      "name": "call_handler",
+      "description": "Initiates, receives, holds, and terminates hands-free phone calls.",
+      "rare": false
+    },
+    {
+      "name": "sms_messenger",
+      "description": "Reads incoming text messages aloud and composes short text reply messages via voice.",
+      "rare": false
+    },
+    {
+      "name": "fuel_station_finder",
+      "description": "Locates nearby petrol, diesel, or EV charging stations with live pricing and availability.",
+      "rare": false
+    },
+    {
+      "name": "parking_locator",
+      "description": "Finds available parking spots near a destination, shows pricing, and supports reservation.",
+      "rare": false
+    },
+    {
+      "name": "poi_search",
+      "description": "Searches for points of interest such as restaurants, cafes, hospitals, ATMs, and shops near the current location.",
+      "rare": false
+    },
+    {
+      "name": "trip_logger",
+      "description": "Records trip history including routes, distances, durations, and timestamps and exports reports.",
+      "rare": false
+    },
+    {
+      "name": "remote_vehicle_lock",
+      "description": "Remotely locks or unlocks vehicle doors, boot, and windows and reports current lock state.",
+      "rare": false
+    },
+    {
+      "name": "battery_status_monitor",
+      "description": "Reports EV battery state of charge, estimated driving range, and current charging session status.",
+      "rare": false
+    },
+    {
+      "name": "ev_charging_scheduler",
+      "description": "Schedules EV charging sessions for off-peak hours and optimises charging cost based on tariff data.",
+      "rare": false
+    },
+    {
+      "name": "news_briefing",
+      "description": "Delivers summarised news headlines, sports scores, and personalised content as a brief audio update.",
+      "rare": false
+    },
+    {
+      "name": "package_tracker",
+      "description": "Tracks parcel deliveries across carriers, provides ETA updates, and alerts on delivery status changes.",
+      "rare": false
+    },
+    {
+      "name": "toll_payment_service",
+      "description": "Processes automatic toll payments, maintains account balance, and provides toll cost estimates for routes.",
+      "rare": false
+    },
+    {
+      "name": "health_monitor",
+      "description": "Monitors driver biometrics such as heart rate, blood oxygen, and cumulative fatigue score from wearables.",
+      "rare": false
+    },
+    {
+      "name": "corp-cloud-sync",
+      "description": "Syncs vehicle personalisation settings, seat positions, and preferences to the driver's cloud profile.",
+      "rare": false
+    },
+    {
+      "name": "emergency_sos",
+      "description": "Triggers an emergency SOS alert, shares GPS location, and contacts emergency services and next-of-kin.",
+      "rare": true
+    },
+    {
+      "name": "roadside_assistance",
+      "description": "Requests roadside assistance for breakdowns, flat tyres, or lockouts and tracks the technician's ETA.",
+      "rare": true
+    },
+    {
+      "name": "insurance_claims",
+      "description": "Initiates, documents, and tracks vehicle insurance claims including photo upload and damage assessment.",
+      "rare": true
+    },
+    {
+      "name": "home_automation_bridge",
+      "description": "Controls smart home devices such as lights, thermostats, and door locks when approaching or leaving home.",
+      "rare": true
+    },
+    {
+      "name": "corp-fleet-manager",
+      "description": "Manages a fleet of corporate vehicles: tracks locations, assigns vehicles to drivers, and reports utilisation.",
+      "rare": true
+    }
+  ]
+}

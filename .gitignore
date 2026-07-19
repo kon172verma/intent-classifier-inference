@@ -1,0 +1,51 @@
+# macOS
+.DS_Store
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.python-version
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Build and package outputs
+build/
+dist/
+*.egg-info/
+
+# Logs and temp files
+*.log
+tmp/
+temp/
+
+# Model and benchmark artifacts
+artifacts/
+outputs/
+results/
+benchmarks/
+reports/
+cache/
+
+# Runtime engine outputs
+*.gguf
+*.onnx
+*.engine
+*.plan
+
+# Editor
+.vscode/
