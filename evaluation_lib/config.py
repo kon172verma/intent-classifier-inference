@@ -1,0 +1,32 @@
+"""Project-wide constants: model registry, dataset paths, generation settings."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+REPO_ROOT: Path = Path(__file__).parent.parent
+
+MODEL_PATHS: dict[str, Path] = {
+    "qwen3": REPO_ROOT / "models" / "intent-classifier-qwen3-0.6b_C_1k_merged",
+    "llama3": REPO_ROOT / "models" / "intent-classifier-llama3.2-1b_C_1k_merged",
+}
+
+MODEL_DISPLAY_NAMES: dict[str, str] = {
+    "qwen3": "Qwen3-0.6B",
+    "llama3": "Llama-3.2-1B",
+}
+
+DATASET_DEFAULT: Path = REPO_ROOT / "dataset_full" / "sample_0001.json"
+
+MAX_NEW_TOKENS: int = 32
+WARMUP_EXAMPLES: int = 2
+
+# Static system prompt used for all tool-routing evaluations.
+# This is also the cacheable prefix in prefix_cache mode.
+SYSTEM_PROMPT: str = (
+    "You are a tool router.\n\n"
+    "Rules:\n"
+    "- Return only the tool name.\n"
+    '- Return "none" if no tool matches.\n'
+    "- Do not explain."
+)
