@@ -44,9 +44,14 @@ if str(_REPO_ROOT) not in sys.path:
 from evaluation_baseline.cache import (  # noqa: E402
     clone_cache,
     compute_prefix_cache,
+    ingest_tools_prefix,
     kv_cache_bytes,
 )
-from evaluation_baseline.inference import TTFTCapture, run_inference  # noqa: E402
+from evaluation_baseline.inference import (  # noqa: E402
+    TTFTCapture,
+    find_tools_query_boundary,
+    run_inference,
+)
 from evaluation_baseline.model_loader import load_model_and_tokenizer  # noqa: E402
 from evaluation_lib.config import (  # noqa: E402
     DATASET_DEFAULT,
@@ -61,6 +66,7 @@ from evaluation_lib.output_parser import extract_predicted_tool  # noqa: E402
 from evaluation_lib.prompt import (  # noqa: E402
     build_full_prompt,
     build_system_prefix_text,
+    build_tools_only_prompt,
 )
 
 _RESULTS_DIR = _REPO_ROOT / "evaluation_baseline" / "results"
@@ -201,23 +207,49 @@ def main() -> None:
             else f"[{idx - args.warmup + 1:3d}/{len(dataset) - args.warmup}]"
         )
 
-        if mode == "prefix_cache" and prefix_past_kv is not None:
-            suffix_ids = full_ids[:, prefix_len:]
+        if mode == "no_cache":
+            timing = run_inference(
+                model, tokenizer, full_ids, mode, device, ttft_capture
+            )
+        else:
+            # kv_cache & prefix_cache: split prefill into a tools-list phase
+            # and a user-query phase, timed separately. In production the
+            # tools list is static across many requests while only the
+            # query changes per call, so this isolates the per-request cost.
+            if mode == "prefix_cache" and prefix_past_kv is not None:
+                base_cache = clone_cache(prefix_past_kv)
+                base_len = prefix_len
+            else:
+                base_cache = None
+                base_len = 0
+
+            tools_only_prompt = build_tools_only_prompt(tokenizer, available_tools)
+            tools_only_ids = tokenizer(
+                tools_only_prompt, return_tensors="pt"
+            ).input_ids.to(device)
+            boundary = find_tools_query_boundary(full_ids, tools_only_ids)
+
+            tools_len = max(0, boundary - base_len)
+            tools_ids = full_ids[:, base_len : base_len + tools_len]
+            query_ids = full_ids[:, base_len + tools_len :]
             total_len = full_ids.shape[1]
             attn_mask = torch.ones(1, total_len, dtype=torch.long, device=device)
+
+            cache_after_tools, tools_prefill_ms = ingest_tools_prefix(
+                model, tools_ids, device, past_key_values=base_cache
+            )
             timing = run_inference(
                 model,
                 tokenizer,
-                suffix_ids,
+                query_ids,
                 mode,
                 device,
                 ttft_capture,
-                past_key_values=clone_cache(prefix_past_kv),
+                past_key_values=cache_after_tools,
                 attention_mask=attn_mask,
-            )
-        else:
-            timing = run_inference(
-                model, tokenizer, full_ids, mode, device, ttft_capture
+                tools_prefill_ms=tools_prefill_ms,
+                tools_prefill_tokens=tools_len,
+                report_prefill_split=True,
             )
 
         predicted = extract_predicted_tool(timing["generated_text"], tool_names)
@@ -257,6 +289,15 @@ def main() -> None:
     print("\n--- Latency (mean) ---")
     print(f"  TTFT           : {aggregate.get('mean_ttft_ms')} ms")
     print(f"  prefill        : {aggregate.get('mean_prefill_latency_ms')} ms")
+    if aggregate.get("mean_tools_prefill_latency_ms") is not None:
+        print(
+            f"    tools list   : {aggregate.get('mean_tools_prefill_latency_ms')} ms"
+            f" ({aggregate.get('mean_tools_prefill_tokens')} tok, amortisable in prod)"
+        )
+        print(
+            f"    user query   : {aggregate.get('mean_query_prefill_latency_ms')} ms"
+            f" ({aggregate.get('mean_query_prefill_tokens')} tok, true per-request cost)"
+        )
     print(f"  decode         : {aggregate.get('mean_decode_latency_ms')} ms")
     print(f"  E2E            : {aggregate.get('mean_e2e_latency_ms')} ms")
     print("\n--- Throughput ---")
@@ -297,6 +338,18 @@ def main() -> None:
         "transformers_version": transformers.__version__,
         "model_weights_mb": weights_mb,
     }
+
+    if mode in ("kv_cache", "prefix_cache"):
+        run_config["prefill_split_info"] = {
+            "enabled": True,
+            "note": (
+                "prefill is measured in two phases: tools_prefill_* covers "
+                "ingesting the available-tools list (static/cacheable across "
+                "requests in production), query_prefill_* covers ingesting "
+                "the dynamic user query. prefill_latency_ms/ttft_ms remain "
+                "the sum of both phases for backward compatibility."
+            ),
+        }
 
     if mode == "prefix_cache":
         run_config["prefix_cache_info"] = {

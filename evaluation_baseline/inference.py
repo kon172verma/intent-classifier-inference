@@ -43,6 +43,23 @@ class TTFTCapture(LogitsProcessor):
         return scores
 
 
+def find_tools_query_boundary(
+    full_ids: torch.Tensor, tools_only_ids: torch.Tensor
+) -> int:
+    """Return the index (within *full_ids*) where the user-query tokens begin.
+
+    Computed as the length of the common token prefix between the real
+    prompt's ids and an equivalent prompt built with an empty user request
+    (see ``build_tools_only_prompt``). This is robust to tokenizer merge
+    effects at the boundary, unlike a raw string split on a literal marker.
+    """
+    n = min(full_ids.shape[1], tools_only_ids.shape[1])
+    a = full_ids[0, :n]
+    b = tools_only_ids[0, :n]
+    mismatch = (a != b).nonzero()
+    return int(mismatch[0].item()) if mismatch.numel() > 0 else n
+
+
 def run_inference(
     model: Any,
     tokenizer: Any,
@@ -52,6 +69,9 @@ def run_inference(
     ttft_capture: TTFTCapture,
     past_key_values: Any = None,
     attention_mask: torch.Tensor | None = None,
+    tools_prefill_ms: float = 0.0,
+    tools_prefill_tokens: int = 0,
+    report_prefill_split: bool = False,
 ) -> dict:
     """Run one inference pass and return per-example timing and output data.
 
@@ -59,12 +79,25 @@ def run_inference(
     ----------
     input_ids:
         Tokenised prompt (or the dynamic suffix when *past_key_values* provided).
+        When *report_prefill_split* is True, this is just the user-query
+        tokens — the tools-list tokens were already ingested by the caller
+        via ``ingest_tools_prefix`` and folded into *past_key_values*.
     mode:
         ``"no_cache"`` | ``"kv_cache"`` | ``"prefix_cache"``
     past_key_values:
-        Pre-computed prefix KV cache (``prefix_cache`` mode only).
+        Pre-computed KV cache (``kv_cache``/``prefix_cache`` modes only).
     attention_mask:
         Full mask covering both the cached prefix and the current tokens.
+    tools_prefill_ms:
+        Wall-clock time already spent ingesting the tools-list prefix (prefill
+        phase 1), measured by the caller before this function was invoked.
+    tools_prefill_tokens:
+        Number of tools-list tokens covered by *tools_prefill_ms*.
+    report_prefill_split:
+        When True, report the tools-list vs. user-query prefill split as
+        separate ``tools_prefill_*`` / ``query_prefill_*`` fields (only
+        meaningful for ``kv_cache``/``prefix_cache`` modes, where the
+        tools-list KV cache can actually be reused/isolated).
     """
     use_cache = mode != "no_cache"
 
@@ -97,16 +130,27 @@ def run_inference(
     t_end = time.perf_counter()
     gpu_peak_mb = peak_gpu_memory_mb(device)
 
-    e2e_ms = (t_end - t_start) * 1000
-    ttft_ms = ttft_capture.ttft_ms if ttft_capture.ttft_ms is not None else e2e_ms
-    prefill_ms = ttft_ms
-    decode_ms = max(0.0, e2e_ms - prefill_ms)
+    # e2e_ms/query_prefill_ms below cover only *this* call (user-query
+    # ingestion + decode). When report_prefill_split is set, the caller
+    # already spent tools_prefill_ms ingesting the tools-list prefix before
+    # calling this function, so the totals fold that in for backward-
+    # compatible "overall prefill/e2e" fields.
+    call_e2e_ms = (t_end - t_start) * 1000
+    query_prefill_ms = (
+        ttft_capture.ttft_ms if ttft_capture.ttft_ms is not None else call_e2e_ms
+    )
+    decode_ms = max(0.0, call_e2e_ms - query_prefill_ms)
+
+    total_prefill_ms = tools_prefill_ms + query_prefill_ms
+    total_e2e_ms = tools_prefill_ms + call_e2e_ms
 
     # Effective context length includes cached prefix tokens.
     n_input = input_ids.shape[1] + cached_prefix_tokens
     n_generated = result.sequences.shape[1] - input_ids.shape[1]
 
-    prefill_tok_per_sec = (n_input / prefill_ms * 1000) if prefill_ms > 0 else None
+    prefill_tok_per_sec = (
+        (n_input / total_prefill_ms * 1000) if total_prefill_ms > 0 else None
+    )
     decode_tok_per_sec = (
         ((n_generated - 1) / decode_ms * 1000)
         if decode_ms > 0 and n_generated > 1
@@ -121,14 +165,14 @@ def run_inference(
         [int(i) for i in new_ids], skip_special_tokens=True
     )
 
-    return {
+    output = {
         "generated_text": generated_text.strip(),
         "n_input_tokens": n_input,
         "n_generated_tokens": n_generated,
-        "prefill_latency_ms": round(prefill_ms, 3),
+        "prefill_latency_ms": round(total_prefill_ms, 3),
         "decode_latency_ms": round(decode_ms, 3),
-        "e2e_latency_ms": round(e2e_ms, 3),
-        "ttft_ms": round(ttft_ms, 3),
+        "e2e_latency_ms": round(total_e2e_ms, 3),
+        "ttft_ms": round(total_prefill_ms, 3),
         "prefill_tok_per_sec": (
             round(prefill_tok_per_sec, 2) if prefill_tok_per_sec is not None else None
         ),
@@ -138,3 +182,47 @@ def run_inference(
         "kv_cache_bytes": kv_bytes,
         "peak_gpu_mb": gpu_peak_mb,
     }
+
+    if report_prefill_split:
+        query_prefill_tokens = input_ids.shape[1]
+        tools_tok_per_sec = (
+            (tools_prefill_tokens / tools_prefill_ms * 1000)
+            if tools_prefill_ms > 0
+            else None
+        )
+        query_tok_per_sec = (
+            (query_prefill_tokens / query_prefill_ms * 1000)
+            if query_prefill_ms > 0
+            else None
+        )
+        output.update(
+            {
+                "tools_prefill_latency_ms": round(tools_prefill_ms, 3),
+                "tools_prefill_tokens": tools_prefill_tokens,
+                "tools_prefill_tok_per_sec": (
+                    round(tools_tok_per_sec, 2)
+                    if tools_tok_per_sec is not None
+                    else None
+                ),
+                "query_prefill_latency_ms": round(query_prefill_ms, 3),
+                "query_prefill_tokens": query_prefill_tokens,
+                "query_prefill_tok_per_sec": (
+                    round(query_tok_per_sec, 2)
+                    if query_tok_per_sec is not None
+                    else None
+                ),
+            }
+        )
+    else:
+        output.update(
+            {
+                "tools_prefill_latency_ms": None,
+                "tools_prefill_tokens": None,
+                "tools_prefill_tok_per_sec": None,
+                "query_prefill_latency_ms": None,
+                "query_prefill_tokens": None,
+                "query_prefill_tok_per_sec": None,
+            }
+        )
+
+    return output

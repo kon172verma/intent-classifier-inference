@@ -17,6 +17,19 @@ Why this device matters:
 - Strong local baseline for latency and quality comparisons
 - Useful reference before running constrained edge tests
 
+### MPS Precision / Quantization Support
+
+| Precision / Method | MPS Support | Notes |
+| --- | --- | --- |
+| FP16 | ✅ | Fully supported, hardware-accelerated. Generally the fastest option on MPS. |
+| BF16 | ✅ | Fully supported, hardware-accelerated. Slightly slower than FP16 today (less mature kernel coverage). |
+| INT8 (`bitsandbytes` `load_in_8bit`) | ❌ | CUDA-only kernels; `device_map="mps"` raises an error rather than falling back. |
+| INT8 (PyTorch native `quantize_dynamic`) | ❌ | Quantized int8 kernels (`qnnpack`/`fbgemm`) only register CPU backends. Works on CPU (arm64 uses `qnnpack`), not MPS. |
+| INT8 (`torchao` weight-only/dynamic) | ⚠️ | More likely to dispatch to MPS ops than int4, but some paths assume CUDA fused kernels and may silently fall back to slow eager ops. |
+| FP8 | ❌ | CUDA-only, typically Hopper-GPU-specific. |
+| INT4 / NF4 (`bitsandbytes`) | ❌ | CUDA-only. |
+| INT4 (`torchao` weight-only) | ⚠️ | Recent releases include MPS-specific packed-int4 kernels; support depends on installed version. |
+
 ## Raspberry Pi 5 Model B Rev 1.0
 
 - Board: Raspberry Pi 5 Model B Rev 1.0

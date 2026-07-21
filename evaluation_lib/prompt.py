@@ -51,3 +51,15 @@ def build_system_prefix_text(tokenizer: Any) -> str:
         )
     except Exception:
         return ""
+
+
+def build_tools_only_prompt(tokenizer: Any, available_tools: list[dict]) -> str:
+    """Build the full chat-template prompt with an empty user request.
+
+    Identical to :func:`build_full_prompt` except the user request is blank.
+    Tokenising this alongside the real prompt lets callers find the token
+    boundary between the (static, cacheable) tools-list prefix and the
+    (dynamic) user-query suffix via a longest-common-prefix comparison,
+    without having to parse or split the rendered chat-template string.
+    """
+    return build_full_prompt(tokenizer, "", available_tools)

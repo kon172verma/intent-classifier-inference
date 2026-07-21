@@ -151,3 +151,44 @@ def compute_prefix_cache(
         f" cache_size={cache_kb:.1f} KB\n"
     )
     return out.past_key_values, prefix_len, creation_ms
+
+
+# ---------------------------------------------------------------------------
+# Tools-list prefix ingestion (prefill phase 1)
+# ---------------------------------------------------------------------------
+
+
+def ingest_tools_prefix(
+    model: Any,
+    tools_ids: torch.Tensor,
+    device: str,
+    past_key_values: Any = None,
+) -> tuple[Any, float]:
+    """Run one forward pass over the tools-list tokens, extending *past_key_values*.
+
+    This isolates "prefill phase 1" (ingesting the available-tools list) from
+    "prefill phase 2" (ingesting the dynamic user query, timed separately by
+    the caller).  In a real deployment the tools list is static across many
+    requests, so its ingestion cost is reported separately from the per-query
+    cost.
+
+    Returns
+    -------
+    updated_cache
+        *past_key_values* extended with the tools-list tokens (or unchanged
+        if *tools_ids* is empty).
+    elapsed_ms
+        Wall-clock time for this forward pass (0.0 if *tools_ids* is empty).
+    """
+    if tools_ids.shape[1] == 0:
+        return past_key_values, 0.0
+
+    synchronize(device)
+    t0 = time.perf_counter()
+    with torch.no_grad():
+        out = model(
+            input_ids=tools_ids, past_key_values=past_key_values, use_cache=True
+        )
+    synchronize(device)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+    return out.past_key_values, elapsed_ms

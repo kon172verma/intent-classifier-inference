@@ -27,6 +27,7 @@ env/
 build/
 dist/
 *.egg-info/
+*.zip
 
 # Logs and temp files
 *.log

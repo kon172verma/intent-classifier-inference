@@ -26,6 +26,16 @@ def aggregate_metrics(per_example: list[dict]) -> dict:
     prefill_vals = [e["prefill_latency_ms"] for e in per_example]
     decode_vals = [e["decode_latency_ms"] for e in per_example]
     e2e_vals = [e["e2e_latency_ms"] for e in per_example]
+    tools_prefill_vals = [
+        e["tools_prefill_latency_ms"]
+        for e in per_example
+        if e.get("tools_prefill_latency_ms") is not None
+    ]
+    query_prefill_vals = [
+        e["query_prefill_latency_ms"]
+        for e in per_example
+        if e.get("query_prefill_latency_ms") is not None
+    ]
 
     return {
         "n_examples": len(per_example),
@@ -43,6 +53,24 @@ def aggregate_metrics(per_example: list[dict]) -> dict:
         "mean_decode_tok_per_sec": _mean("decode_tok_per_sec"),
         "mean_prefill_tokens": _mean("n_input_tokens"),
         "mean_generated_tokens": _mean("n_generated_tokens"),
+        "mean_tools_prefill_latency_ms": _mean("tools_prefill_latency_ms"),
+        "p50_tools_prefill_latency_ms": (
+            _pct(tools_prefill_vals, 50) if tools_prefill_vals else None
+        ),
+        "p95_tools_prefill_latency_ms": (
+            _pct(tools_prefill_vals, 95) if tools_prefill_vals else None
+        ),
+        "mean_tools_prefill_tokens": _mean("tools_prefill_tokens"),
+        "mean_tools_prefill_tok_per_sec": _mean("tools_prefill_tok_per_sec"),
+        "mean_query_prefill_latency_ms": _mean("query_prefill_latency_ms"),
+        "p50_query_prefill_latency_ms": (
+            _pct(query_prefill_vals, 50) if query_prefill_vals else None
+        ),
+        "p95_query_prefill_latency_ms": (
+            _pct(query_prefill_vals, 95) if query_prefill_vals else None
+        ),
+        "mean_query_prefill_tokens": _mean("query_prefill_tokens"),
+        "mean_query_prefill_tok_per_sec": _mean("query_prefill_tok_per_sec"),
         "peak_ram_mb": round(peak_ram_mb(), 2),
         "mean_kv_cache_bytes": _mean("kv_cache_bytes"),
         "mean_kv_cache_kb": round((_mean("kv_cache_bytes") or 0) / 1024, 2),
