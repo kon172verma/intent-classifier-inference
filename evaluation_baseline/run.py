@@ -101,6 +101,16 @@ def parse_args() -> argparse.Namespace:
         help="Compute device",
     )
     p.add_argument(
+        "--dtype",
+        choices=["float32", "bfloat16", "float16"],
+        default="float16",
+        help=(
+            "Model weight/compute dtype. float16 on CPU falls back to slow "
+            "unoptimized PyTorch kernels (no oneDNN fast path) -- use "
+            "float32 or bfloat16 for CPU benchmarking."
+        ),
+    )
+    p.add_argument(
         "--dataset",
         type=Path,
         default=DATASET_DEFAULT,
@@ -135,6 +145,7 @@ def main() -> None:
     print(f"  model   : {args.model} ({MODEL_DISPLAY_NAMES[args.model]})")
     print(f"  mode    : {mode}")
     print(f"  device  : {device}")
+    print(f"  dtype   : {args.dtype}")
     print(f"  dataset : {args.dataset}")
     print(f"  warmup  : {args.warmup} examples\n")
 
@@ -142,9 +153,12 @@ def main() -> None:
         dataset: list[dict] = json.load(f)
     print(f"[data] Loaded {len(dataset)} examples from {args.dataset.name}\n")
 
-    model, tokenizer = load_model_and_tokenizer(args.model, device)
+    model, tokenizer = load_model_and_tokenizer(args.model, device, args.dtype)
     weights_mb = model_weights_mb(model)
-    print(f"[model] Parameter + buffer size: {weights_mb:.1f} MB (FP16 on {device})\n")
+    print(
+        f"[model] Parameter + buffer size: {weights_mb:.1f} MB"
+        f" ({args.dtype} on {device})\n"
+    )
 
     # ------------------------------------------------------------------
     # Prefix-cache setup (prefix_cache mode only)
@@ -304,7 +318,7 @@ def main() -> None:
     print(f"  prefill tok/s  : {aggregate.get('mean_prefill_tok_per_sec')}")
     print(f"  decode tok/s   : {aggregate.get('mean_decode_tok_per_sec')}")
     print("\n--- Memory ---")
-    print(f"  model weights  : {weights_mb:.1f} MB (static, FP16)")
+    print(f"  model weights  : {weights_mb:.1f} MB (static, {args.dtype})")
     print(f"  peak RAM       : {aggregate.get('peak_ram_mb')} MB")
     print(f"  mean KV cache  : {aggregate.get('mean_kv_cache_kb')} KB")
     _gpu_note = (
@@ -326,7 +340,7 @@ def main() -> None:
         "model_path": str(MODEL_PATHS[args.model]),
         "mode": mode,
         "device": device,
-        "dtype": "float16",
+        "dtype": args.dtype,
         "dataset": str(args.dataset),
         "n_dataset_examples": len(dataset),
         "n_measured_examples": len(per_example),
@@ -371,7 +385,7 @@ def main() -> None:
     }
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = args.output_dir / f"{args.model}_{device}_{mode}_{ts}.json"
+    out_path = args.output_dir / f"{args.model}_{device}_{mode}_{args.dtype}_{ts}.json"
 
     with open(out_path, "w") as f:
         json.dump(output_doc, f, indent=2)

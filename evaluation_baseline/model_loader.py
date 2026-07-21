@@ -9,9 +9,25 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 from evaluation_lib.config import MODEL_DISPLAY_NAMES, MODEL_PATHS
 
+DTYPE_MAP: dict[str, torch.dtype] = {
+    "float32": torch.float32,
+    "bfloat16": torch.bfloat16,
+    "float16": torch.float16,
+}
 
-def load_model_and_tokenizer(model_key: str, device: str) -> tuple[Any, Any]:
+
+def load_model_and_tokenizer(
+    model_key: str, device: str, dtype_name: str = "float16"
+) -> tuple[Any, Any]:
     """Load the tokenizer and model for *model_key*, placing the model on *device*.
+
+    Parameters
+    ----------
+    dtype_name:
+        One of ``"float32"``, ``"bfloat16"``, ``"float16"``. Note that
+        float16 matmuls on CPU fall back to slow/unoptimized kernels in
+        PyTorch (no oneDNN/MKL-DNN fast path), so float32 or bfloat16 is
+        strongly recommended for CPU benchmarking.
 
     Notes
     -----
@@ -23,7 +39,7 @@ def load_model_and_tokenizer(model_key: str, device: str) -> tuple[Any, Any]:
     print(f"[model] Loading tokenizer from {model_path}")
     tokenizer: Any = AutoTokenizer.from_pretrained(str(model_path))
 
-    dtype = torch.float16
+    dtype = DTYPE_MAP[dtype_name]
     print(
         f"[model] Loading {MODEL_DISPLAY_NAMES[model_key]}"
         f" → device={device}, dtype={dtype}"
