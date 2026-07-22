@@ -21,6 +21,21 @@ DATASET_DEFAULT: Path = REPO_ROOT / "dataset_full" / "sample_0001.json"
 MAX_NEW_TOKENS: int = 32
 WARMUP_EXAMPLES: int = 2
 
+# GGUF model files for the llama.cpp evaluation (see evaluation_llama_cpp/).
+# Filenames follow <stem>-<QUANT>.gguf, produced by convert_hf_to_gguf.py +
+# llama-quantize (see evaluation_llama_cpp/readme.md for the conversion steps).
+GGUF_DIR: Path = REPO_ROOT / "models" / "gguf"
+
+MODEL_GGUF_STEMS: dict[str, str] = {
+    "qwen3": "qwen3-0.6b",
+    "llama3": "llama3.2-1b",
+}
+
+# Quantization levels benchmarked for evaluation_llama_cpp.
+QUANT_LEVELS: list[str] = ["Q8_0", "Q6_K", "Q4_K_M"]
+
+N_CTX_DEFAULT: int = 2048
+
 # Static system prompt used for all tool-routing evaluations.
 # This is also the cacheable prefix in prefix_cache mode.
 SYSTEM_PROMPT: str = (

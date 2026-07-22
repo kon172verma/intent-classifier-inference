@@ -19,6 +19,8 @@ env/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+scripts/.venv-convert/
+scripts/llama.cpp-src/
 
 # Jupyter
 .ipynb_checkpoints/

@@ -5,3 +5,4 @@ torch
 numpy
 tensorflow
 matplotlib
+llama-cpp-python
