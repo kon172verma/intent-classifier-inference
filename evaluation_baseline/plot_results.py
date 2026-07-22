@@ -123,12 +123,11 @@ def _group_reports(reports: list[dict]) -> dict:
     return grouped
 
 
-def _annotate_bars(ax, bars, fmt: str = "{:.0f}") -> None:
-    for bar in bars:
-        height = bar.get_height()
+def _annotate_bars(ax, bars, fmts: list[str]) -> None:
+    for bar, fmt in zip(bars, fmts):
         ax.annotate(
-            fmt.format(height),
-            xy=(bar.get_x() + bar.get_width() / 2, height),
+            fmt,
+            xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
             xytext=(0, 3),
             textcoords="offset points",
             ha="center",
@@ -137,37 +136,64 @@ def _annotate_bars(ax, bars, fmt: str = "{:.0f}") -> None:
         )
 
 
-def _panel_preprocessing(ax, aggregate: dict, quality: dict) -> list:
-    labels = ["Preprocessing", "Total Processing", "TTFT"]
+def _render_panel(
+    ax, labels: list[str], values: list[float], fmts: list[str], log: bool, ylim: tuple
+) -> None:
+    """Render one bar panel with a pre-computed, figure-wide shared y-axis range.
+
+    *ylim* is computed across ALL dtype rows for this column beforehand (see
+    _plot_device_model) so that bar heights are visually comparable across
+    rows instead of each row silently rescaling to its own data range.
+    """
+    bars = ax.bar(labels, values, color=_COLORS[: len(labels)])
+    if log:
+        ax.set_yscale("log")
+    ax.set_ylim(*ylim)
+    _annotate_bars(ax, bars, fmts)
+    ax.set_xticklabels([])
+
+
+def _values_preprocessing(aggregate: dict, run_config: dict) -> tuple[list, list]:
+    preprocessing_ms = aggregate.get("mean_preprocessing_latency_ms") or 0.0
+    # Same one-time-cost substitution as _values_phase_breakdown: fold in the
+    # real system-prompt cache-creation cost for prefix_cache mode instead
+    # of the (correctly) zeroed-out per-example system_prefill_latency_ms.
+    if (
+        aggregate.get("mean_system_prefill_latency_ms") or 0.0
+    ) == 0.0 and run_config.get("mode") == "prefix_cache":
+        cache_info = run_config.get("prefix_cache_info") or {}
+        preprocessing_ms += cache_info.get("cache_creation_ms", 0.0)
     values = [
-        aggregate.get("mean_preprocessing_latency_ms") or 0.0,
+        preprocessing_ms,
         aggregate.get("mean_e2e_latency_ms") or 0.0,
         aggregate.get("mean_ttft_ms") or 0.0,
     ]
-    bars = ax.bar(labels, values, color=_COLORS[:3])
-    _annotate_bars(ax, bars, "{:.0f} ms")
-    ax.set_xticklabels([])
-    ax.margins(y=0.15)
-    return bars
+    fmts = ["{:.0f} ms".format(v) for v in values]
+    return values, fmts
 
 
-def _panel_phase_breakdown(ax, aggregate: dict, quality: dict) -> list:
-    labels = ["System Prompt", "Tools List", "User Query", "Decode"]
+def _values_phase_breakdown(aggregate: dict, run_config: dict) -> tuple[list, list]:
+    system_ms = aggregate.get("mean_system_prefill_latency_ms") or 0.0
+    # In prefix_cache mode the system prompt is ingested ONCE outside the
+    # per-example loop, so its per-example cost is correctly 0 in the
+    # aggregate -- the real (one-time, amortised) cost lives in
+    # run_config.prefix_cache_info.cache_creation_ms instead. Show that
+    # instead of a misleading 0 bar.
+    if system_ms == 0.0 and run_config.get("mode") == "prefix_cache":
+        cache_info = run_config.get("prefix_cache_info") or {}
+        if "cache_creation_ms" in cache_info:
+            system_ms = cache_info["cache_creation_ms"]
     values = [
-        aggregate.get("mean_system_prefill_latency_ms") or 0.0,
+        system_ms,
         aggregate.get("mean_tools_prefill_latency_ms") or 0.0,
         aggregate.get("mean_query_prefill_latency_ms") or 0.0,
         aggregate.get("mean_decode_latency_ms") or 0.0,
     ]
-    bars = ax.bar(labels, values, color=_COLORS[:4])
-    _annotate_bars(ax, bars, "{:.0f} ms")
-    ax.set_xticklabels([])
-    ax.margins(y=0.15)
-    return bars
+    fmts = ["{:.0f} ms".format(v) for v in values]
+    return values, fmts
 
 
-def _panel_quality_memory(ax, aggregate: dict, quality: dict) -> list:
-    labels = ["Accuracy %", "Peak RAM MB", "KV Cache MB", "Peak GPU MB"]
+def _values_quality_memory(aggregate: dict, quality: dict) -> tuple[list, list]:
     accuracy_pct = (quality.get("tool_accuracy") or 0.0) * 100
     peak_ram = aggregate.get("peak_ram_mb") or 0.0
     kv_cache_mb = (aggregate.get("mean_kv_cache_kb") or 0.0) / 1024
@@ -177,44 +203,30 @@ def _panel_quality_memory(ax, aggregate: dict, quality: dict) -> list:
     peak_gpu_val = peak_gpu if peak_gpu is not None else 0.15
 
     values = [accuracy_pct, peak_ram, kv_cache_mb, peak_gpu_val]
-    bars = ax.bar(labels, values, color=_COLORS[:4])
-    ax.set_yscale("log")
-    ax.set_ylim(bottom=0.1, top=max(values) * 3)
     fmts = [
         "{:.1f}%".format(accuracy_pct),
         "{:.0f}".format(peak_ram),
         "{:.1f}".format(kv_cache_mb),
         "N/A" if peak_gpu is None else "{:.0f}".format(peak_gpu),
     ]
-    for bar, label in zip(bars, fmts):
-        ax.annotate(
-            label,
-            xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
-            xytext=(0, 3),
-            textcoords="offset points",
-            ha="center",
-            va="bottom",
-            fontsize=7,
-        )
-    ax.set_xticklabels([])
-    return bars
+    return values, fmts
 
 
 _PANELS = [
     (
         "Preprocessing / Processing / TTFT (ms)",
         ["Preprocessing", "Total Processing", "TTFT"],
-        _panel_preprocessing,
+        False,
     ),
     (
         "Prefill Phase Breakdown (ms)",
         ["System Prompt", "Tools List", "User Query", "Decode"],
-        _panel_phase_breakdown,
+        False,
     ),
     (
         "Quality & Memory (log scale)",
         ["Accuracy %", "Peak RAM MB", "KV Cache MB", "Peak GPU MB"],
-        _panel_quality_memory,
+        True,
     ),
 ]
 
@@ -268,14 +280,39 @@ def _plot_device_model(
             title_fontsize=9,
         )
 
+    row_values: list = []
     for row, dtype in enumerate(available_dtypes, start=1):
         doc = dtype_docs[dtype]
         aggregate = doc.get("aggregate", {})
         quality = doc.get("quality", {})
+        doc_run_config = doc.get("run_config", {})
 
-        for col, (_, _, panel_fn) in enumerate(_PANELS):
+        row_values.append(
+            [
+                _values_preprocessing(aggregate, doc_run_config),
+                _values_phase_breakdown(aggregate, doc_run_config),
+                _values_quality_memory(aggregate, quality),
+            ]
+        )
+
+    # Compute one shared y-axis range PER COLUMN across all dtype rows, so
+    # bar heights are visually comparable instead of each row silently
+    # rescaling to its own data range (which made e.g. a 200ms bar and a
+    # 2000ms bar look the same height across different dtype rows).
+    column_ylims: list[tuple] = []
+    for col, (_, _, log) in enumerate(_PANELS):
+        col_values = [v for row in row_values for v in row[col][0]]
+        col_max = max(col_values) if col_values else 1.0
+        if log:
+            column_ylims.append((0.1, col_max * 3))
+        else:
+            column_ylims.append((0.0, col_max * 1.15))
+
+    for row, dtype in enumerate(available_dtypes, start=1):
+        for col, (_, labels, log) in enumerate(_PANELS):
             ax = fig.add_subplot(gs[row, col])
-            panel_fn(ax, aggregate, quality)
+            values, fmts = row_values[row - 1][col]
+            _render_panel(ax, labels, values, fmts, log, column_ylims[col])
             if col == 0:
                 ax.set_ylabel(
                     DTYPE_LABELS.get(dtype, dtype), fontsize=12, fontweight="bold"
