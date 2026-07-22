@@ -181,7 +181,14 @@ def main() -> None:
     text_tokenizer = load_text_tokenizer(MODEL_PATHS[args.model])
 
     def tok(text: str) -> list[int]:
-        return llm.tokenize(text.encode("utf-8"), add_bos=True, special=True)
+        # add_bos=False: the chat template already embeds the literal BOS
+        # token text (e.g. "<|begin_of_text|>" for Llama 3.2) when the
+        # tokenizer's own add_bos_token is False, exactly mirroring how
+        # evaluation_baseline's `tokenizer(text)` call never re-adds a BOS
+        # for this model either. Passing add_bos=True here would prepend a
+        # *second* BOS on top of that literal one (harmless for Qwen3, which
+        # has no BOS token at all, but wrong for Llama 3.2).
+        return llm.tokenize(text.encode("utf-8"), add_bos=False, special=True)
 
     system_prefix_text = build_system_prefix_text(text_tokenizer)
     system_tokens_template = tok(system_prefix_text) if system_prefix_text else []
