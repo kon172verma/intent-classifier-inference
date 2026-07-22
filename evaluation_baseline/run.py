@@ -19,7 +19,7 @@ Usage
 
 Output
 ------
-    evaluation_baseline/results/<model>_<device>_<mode>_<timestamp>.json
+    evaluation_baseline/results/<model>_<machine>_<device>_<mode>_<dtype>_<timestamp>.json
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ if str(_REPO_ROOT) not in sys.path:
 from evaluation_baseline.cache import (  # noqa: E402
     clone_cache,
     compute_prefix_cache,
-    ingest_tools_prefix,
+    ingest_prefix_segment,
     kv_cache_bytes,
 )
 from evaluation_baseline.inference import (  # noqa: E402
@@ -101,6 +101,17 @@ def parse_args() -> argparse.Namespace:
         help="Compute device",
     )
     p.add_argument(
+        "--machine",
+        type=str,
+        default=platform.node() or "unknown",
+        help=(
+            "Label identifying the physical machine this run was executed "
+            "on (e.g. 'rpi', 'mac'). Used to group results for charting "
+            "since the same --device (e.g. cpu) can run on different "
+            "hardware. Defaults to the machine's hostname."
+        ),
+    )
+    p.add_argument(
         "--dtype",
         choices=["float32", "bfloat16", "float16"],
         default="float16",
@@ -143,6 +154,7 @@ def main() -> None:
 
     print("=== Baseline Benchmark ===")
     print(f"  model   : {args.model} ({MODEL_DISPLAY_NAMES[args.model]})")
+    print(f"  machine : {args.machine}")
     print(f"  mode    : {mode}")
     print(f"  device  : {device}")
     print(f"  dtype   : {args.dtype}")
@@ -163,6 +175,17 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Prefix-cache setup (prefix_cache mode only)
     # ------------------------------------------------------------------
+    # The system-prompt token length is needed in ALL cached modes (not just
+    # prefix_cache) to split prefill into 3 phases: system prompt -> tools
+    # list -> user query. system_len is constant across examples since the
+    # system prompt text never changes.
+    _system_prefix_text = build_system_prefix_text(tokenizer)
+    system_len = (
+        tokenizer(_system_prefix_text, return_tensors="pt").input_ids.shape[1]
+        if _system_prefix_text
+        else 0
+    )
+
     prefix_past_kv = None
     prefix_len = 0
     prefix_creation_ms = 0.0
@@ -181,8 +204,7 @@ def main() -> None:
             dataset[0]["available_tools"],
         )
         _full_ids = tokenizer(_sample_prompt, return_tensors="pt").input_ids
-        _prefix_text = build_system_prefix_text(tokenizer)
-        _prefix_ids = tokenizer(_prefix_text, return_tensors="pt").input_ids
+        _prefix_ids = tokenizer(_system_prefix_text, return_tensors="pt").input_ids
         computed_prefix_len = _prefix_ids.shape[1]
 
         if not torch.equal(_full_ids[:, :computed_prefix_len], _prefix_ids):
@@ -226,31 +248,39 @@ def main() -> None:
                 model, tokenizer, full_ids, mode, device, ttft_capture
             )
         else:
-            # kv_cache & prefix_cache: split prefill into a tools-list phase
-            # and a user-query phase, timed separately. In production the
-            # tools list is static across many requests while only the
-            # query changes per call, so this isolates the per-request cost.
-            if mode == "prefix_cache" and prefix_past_kv is not None:
-                base_cache = clone_cache(prefix_past_kv)
-                base_len = prefix_len
-            else:
-                base_cache = None
-                base_len = 0
-
+            # kv_cache & prefix_cache: split prefill into 3 phases -- system
+            # prompt, tools list, user query -- timed separately. In
+            # production the system prompt and tools list are static across
+            # many requests while only the query changes per call, so this
+            # isolates the true per-request cost (user query + decode).
             tools_only_prompt = build_tools_only_prompt(tokenizer, available_tools)
             tools_only_ids = tokenizer(
                 tools_only_prompt, return_tensors="pt"
             ).input_ids.to(device)
             boundary = find_tools_query_boundary(full_ids, tools_only_ids)
 
-            tools_len = max(0, boundary - base_len)
-            tools_ids = full_ids[:, base_len : base_len + tools_len]
-            query_ids = full_ids[:, base_len + tools_len :]
+            if mode == "prefix_cache" and prefix_past_kv is not None:
+                # System prompt was already ingested once outside the loop
+                # (compute_prefix_cache): zero incremental cost per example.
+                cache_after_system = clone_cache(prefix_past_kv)
+                system_prefill_ms = 0.0
+                system_prefill_tokens = prefix_len
+            else:
+                # kv_cache mode has no persistent cache across examples, so
+                # the system prompt is re-ingested (and re-timed) every call.
+                system_ids = full_ids[:, :system_len]
+                cache_after_system, system_prefill_ms = ingest_prefix_segment(
+                    model, system_ids, device, past_key_values=None
+                )
+                system_prefill_tokens = system_len
+
+            tools_ids = full_ids[:, system_len:boundary]
+            query_ids = full_ids[:, boundary:]
             total_len = full_ids.shape[1]
             attn_mask = torch.ones(1, total_len, dtype=torch.long, device=device)
 
-            cache_after_tools, tools_prefill_ms = ingest_tools_prefix(
-                model, tools_ids, device, past_key_values=base_cache
+            cache_after_tools, tools_prefill_ms = ingest_prefix_segment(
+                model, tools_ids, device, past_key_values=cache_after_system
             )
             timing = run_inference(
                 model,
@@ -261,8 +291,10 @@ def main() -> None:
                 ttft_capture,
                 past_key_values=cache_after_tools,
                 attention_mask=attn_mask,
+                system_prefill_ms=system_prefill_ms,
+                system_prefill_tokens=system_prefill_tokens,
                 tools_prefill_ms=tools_prefill_ms,
-                tools_prefill_tokens=tools_len,
+                tools_prefill_tokens=tools_ids.shape[1],
                 report_prefill_split=True,
             )
 
@@ -301,19 +333,28 @@ def main() -> None:
     print(f"  accuracy       : {quality.get('tool_accuracy', 0):.2%}")
     print(f"  invalid rate   : {quality.get('invalid_tool_rate', 0):.2%}")
     print("\n--- Latency (mean) ---")
-    print(f"  TTFT           : {aggregate.get('mean_ttft_ms')} ms")
-    print(f"  prefill        : {aggregate.get('mean_prefill_latency_ms')} ms")
-    if aggregate.get("mean_tools_prefill_latency_ms") is not None:
+    _split_active = aggregate.get("mean_preprocessing_latency_ms") is not None
+    if _split_active:
+        print(
+            f"  preprocessing  : {aggregate.get('mean_preprocessing_latency_ms')} ms"
+            f" (system prompt + tools list; excluded from TTFT/E2E below)"
+        )
+        print(
+            f"    system prompt: {aggregate.get('mean_system_prefill_latency_ms')} ms"
+            f" ({aggregate.get('mean_system_prefill_tokens')} tok)"
+        )
         print(
             f"    tools list   : {aggregate.get('mean_tools_prefill_latency_ms')} ms"
-            f" ({aggregate.get('mean_tools_prefill_tokens')} tok, amortisable in prod)"
+            f" ({aggregate.get('mean_tools_prefill_tokens')} tok)"
         )
-        print(
-            f"    user query   : {aggregate.get('mean_query_prefill_latency_ms')} ms"
-            f" ({aggregate.get('mean_query_prefill_tokens')} tok, true per-request cost)"
-        )
+    _qualifier = " (user query only)" if _split_active else ""
+    print(f"  TTFT           : {aggregate.get('mean_ttft_ms')} ms{_qualifier}")
+    print(f"  prefill        : {aggregate.get('mean_prefill_latency_ms')} ms")
     print(f"  decode         : {aggregate.get('mean_decode_latency_ms')} ms")
-    print(f"  E2E            : {aggregate.get('mean_e2e_latency_ms')} ms")
+    _qualifier_e2e = " (user query + decode only)" if _split_active else ""
+    print(
+        f"  E2E            : {aggregate.get('mean_e2e_latency_ms')} ms{_qualifier_e2e}"
+    )
     print("\n--- Throughput ---")
     print(f"  prefill tok/s  : {aggregate.get('mean_prefill_tok_per_sec')}")
     print(f"  decode tok/s   : {aggregate.get('mean_decode_tok_per_sec')}")
@@ -338,6 +379,7 @@ def main() -> None:
         "model_key": args.model,
         "model_name": MODEL_DISPLAY_NAMES[args.model],
         "model_path": str(MODEL_PATHS[args.model]),
+        "machine": args.machine,
         "mode": mode,
         "device": device,
         "dtype": args.dtype,
@@ -357,11 +399,19 @@ def main() -> None:
         run_config["prefill_split_info"] = {
             "enabled": True,
             "note": (
-                "prefill is measured in two phases: tools_prefill_* covers "
-                "ingesting the available-tools list (static/cacheable across "
-                "requests in production), query_prefill_* covers ingesting "
-                "the dynamic user query. prefill_latency_ms/ttft_ms remain "
-                "the sum of both phases for backward compatibility."
+                "prefill is measured in 3 phases: system_prefill_* covers "
+                "ingesting the static system prompt, tools_prefill_* covers "
+                "ingesting the available-tools list, query_prefill_* covers "
+                "ingesting the dynamic user query. Both system prompt and "
+                "tools list are treated as pre-processing that happens ahead "
+                "of the live request in production, so ttft_ms/"
+                "prefill_latency_ms/e2e_latency_ms cover ONLY the user-query "
+                "phase (+ decode for e2e); preprocessing_latency_ms is the "
+                "sum of system_prefill_latency_ms + tools_prefill_latency_ms, "
+                "reported separately per example. In prefix_cache mode, "
+                "system_prefill_latency_ms is 0 per example because the "
+                "system prompt is cached once (see prefix_cache_info) rather "
+                "than re-ingested every call."
             ),
         }
 
@@ -385,7 +435,10 @@ def main() -> None:
     }
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    out_path = args.output_dir / f"{args.model}_{device}_{mode}_{args.dtype}_{ts}.json"
+    out_path = (
+        args.output_dir
+        / f"{args.model}_{args.machine}_{device}_{mode}_{args.dtype}_{ts}.json"
+    )
 
     with open(out_path, "w") as f:
         json.dump(output_doc, f, indent=2)

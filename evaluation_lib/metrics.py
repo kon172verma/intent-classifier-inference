@@ -26,6 +26,16 @@ def aggregate_metrics(per_example: list[dict]) -> dict:
     prefill_vals = [e["prefill_latency_ms"] for e in per_example]
     decode_vals = [e["decode_latency_ms"] for e in per_example]
     e2e_vals = [e["e2e_latency_ms"] for e in per_example]
+    preprocessing_vals = [
+        e["preprocessing_latency_ms"]
+        for e in per_example
+        if e.get("preprocessing_latency_ms") is not None
+    ]
+    system_prefill_vals = [
+        e["system_prefill_latency_ms"]
+        for e in per_example
+        if e.get("system_prefill_latency_ms") is not None
+    ]
     tools_prefill_vals = [
         e["tools_prefill_latency_ms"]
         for e in per_example
@@ -53,6 +63,22 @@ def aggregate_metrics(per_example: list[dict]) -> dict:
         "mean_decode_tok_per_sec": _mean("decode_tok_per_sec"),
         "mean_prefill_tokens": _mean("n_input_tokens"),
         "mean_generated_tokens": _mean("n_generated_tokens"),
+        "mean_preprocessing_latency_ms": _mean("preprocessing_latency_ms"),
+        "p50_preprocessing_latency_ms": (
+            _pct(preprocessing_vals, 50) if preprocessing_vals else None
+        ),
+        "p95_preprocessing_latency_ms": (
+            _pct(preprocessing_vals, 95) if preprocessing_vals else None
+        ),
+        "mean_system_prefill_latency_ms": _mean("system_prefill_latency_ms"),
+        "p50_system_prefill_latency_ms": (
+            _pct(system_prefill_vals, 50) if system_prefill_vals else None
+        ),
+        "p95_system_prefill_latency_ms": (
+            _pct(system_prefill_vals, 95) if system_prefill_vals else None
+        ),
+        "mean_system_prefill_tokens": _mean("system_prefill_tokens"),
+        "mean_system_prefill_tok_per_sec": _mean("system_prefill_tok_per_sec"),
         "mean_tools_prefill_latency_ms": _mean("tools_prefill_latency_ms"),
         "p50_tools_prefill_latency_ms": (
             _pct(tools_prefill_vals, 50) if tools_prefill_vals else None
